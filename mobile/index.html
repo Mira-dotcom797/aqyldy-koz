@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ақылды көз</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #0f172a; 
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 30px 20px;
+        }
+        h1 { margin-bottom: 8px; color: #38bdf8; text-align: center; font-size: 32px; }
+        p.subtitle { color: #94a3b8; margin-bottom: 25px; text-align: center; font-size: 16px; }
+        
+        .card {
+            background: #1e293b;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 500px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        #webcam-container { 
+            margin: 15px 0; 
+            border: 3px solid #38bdf8; 
+            border-radius: 12px; 
+            overflow: hidden; 
+            width: 320px;
+            height: 320px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #0f172a;
+        }
+
+        #webcam-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover;
+        }
+
+        #result-card {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 12px;
+            width: 100%;
+            text-align: center;
+            background-color: rgba(56, 189, 248, 0.1);
+            border: 2px solid #38bdf8;
+            transition: all 0.3s ease;
+        }
+
+        .result-title { font-size: 14px; color: #94a3b8; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
+        #label-container { font-size: 22px; font-weight: bold; color: #38bdf8; }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button { 
+            padding: 12px 20px; 
+            font-size: 15px; 
+            cursor: pointer; 
+            background-color: #38bdf8; 
+            color: #0f172a; 
+            border: none; 
+            border-radius: 8px; 
+            font-weight: bold; 
+            transition: 0.3s;
+        }
+        button:hover { background-color: #0ea5e9; transform: translateY(-2px); }
+        button:disabled { background-color: #475569; color: #94a3b8; cursor: not-allowed; transform: none; }
+        
+        .btn-switch {
+            background-color: #0284c7;
+            color: #ffffff;
+        }
+        .btn-switch:hover { background-color: #0369a1; }
+    </style>
+</head>
+<body>
+
+    <h1>Ақылды көз</h1>
+    <p class="subtitle">Камера арқылы айналадағы объектілерді анықтау</p>
+    
+    <div class="card">
+        <div class="btn-group">
+            <button id="btn-start" type="button" onclick="initModel()">Камераны іске қосу</button>
+            <button id="btn-toggle" type="button" class="btn-switch" style="display: none;" onclick="switchCamera()">Камераны ауыстыру 🔄</button>
+        </div>
+
+        <div id="webcam-container">
+            <span id="cam-placeholder" style="color: #64748b;">Камера күтілуде...</span>
+        </div>
+
+        <div id="result-card">
+            <div class="result-title">Анықталған объект:</div>
+            <div id="label-container">Күту режимі...</div>
+        </div>
+    </div>
+
+    <script>
+    let model=null, stream=null, video=null, active=false, facing='environment', lastLabel='', loading=false;
+    const result=()=>document.getElementById('label-container');
+    const startBtn=()=>document.getElementById('btn-start');
+    function status(t){result().textContent=t;}
+    function errorText(e){return (e && (e.message||e.name)) || String(e);}
+    async function openCamera(){
+      if (!window.isSecureContext) throw new Error('HTTPS қажет. Сайтты Safari немесе Chrome арқылы ашыңыз.');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Бұл браузер камераны қолдамайды. Safari немесе Chrome браузерінде ашыңыз.');
+      if(stream) stream.getTracks().forEach(t=>t.stop());
+      stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:facing},width:{ideal:640},height:{ideal:480}}});
+      const box=document.getElementById('webcam-container');
+      box.innerHTML='';
+      video=document.createElement('video');
+      video.autoplay=true;video.muted=true;video.playsInline=true;
+      video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');
+      video.style.cssText='width:100%;height:100%;object-fit:cover';
+      box.appendChild(video);
+      video.srcObject=stream;
+      await video.play();
+      document.getElementById('btn-toggle').style.display='inline-block';
+    }
+    async function initModel(){
+      if(loading)return;
+      loading=true;startBtn().disabled=true;
+      try{
+        status('Камера ашылуда...');startBtn().textContent='Камера ашылуда...';
+        await openCamera();
+        status('Камера қосылды. Модель жүктелуде...');
+        startBtn().textContent='Модель жүктелуде...';
+        if(!window.tmImage)throw new Error('Teachable Machine кітапханасы жүктелмеді. Интернет байланысын тексеріңіз.');
+        model=await tmImage.load('./model.json','./metadata.json');
+        active=true;startBtn().style.display='none';status('Объектіні камераға көрсетіңіз...');
+        predictLoop();
+      }catch(e){status('Қате: '+errorText(e));startBtn().disabled=false;startBtn().textContent='Қайта көру';console.error(e);}
+      finally{loading=false;}
+    }
+    async function switchCamera(){
+      facing=facing==='environment'?'user':'environment';
+      const btn=document.getElementById('btn-toggle');btn.disabled=true;
+      try{await openCamera();}catch(e){status('Камера қатесі: '+errorText(e));}
+      finally{btn.disabled=false;}
+    }
+    function speakText(t){
+      if(!('speechSynthesis' in window)||lastLabel===t)return;
+      lastLabel=t;window.speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance(t);u.lang='kk-KZ';u.rate=.9;
+      window.speechSynthesis.speak(u);
+    }
+    async function predictLoop(){
+      while(active){
+        try{
+          if(video && video.readyState>=2){
+            const predictions=await model.predict(video);
+            const best=predictions.reduce((a,b)=>b.probability>a.probability?b:a);
+            if(best.probability>.70){
+              let name=best.className;
+              if(['қоқыс шелегі','байланыс кабелі','баспалдақ'].some(x=>name.toLowerCase().includes(x)))name='Абайлаңыз!!! '+name;
+              status(name+' ('+Math.round(best.probability*100)+'%)');speakText(name);
+            }else{status('Анықталмады...');lastLabel='';}
+          }
+        }catch(e){status('Тану қатесі: '+errorText(e));console.error(e);active=false;break;}
+        await new Promise(r=>setTimeout(r,250));
+      }
+    }
+    </script>
+</body>
+</html>
