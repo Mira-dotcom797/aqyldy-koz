@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="kk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Ақылды көз — мобильді v3</title>
+<style>body{margin:0;background:#0f172a;color:#e2e8f0;font:17px system-ui,sans-serif;padding:22px;text-align:center}h1{color:#38bdf8}main{max-width:520px;margin:auto;background:#1e293b;border-radius:20px;padding:20px}video{display:block;width:100%;aspect-ratio:1;object-fit:cover;background:#020617;border:2px solid #38bdf8;border-radius:14px}button{background:#38bdf8;color:#082f49;border:0;border-radius:12px;padding:14px 18px;margin:8px;font-weight:700;font-size:17px}button:disabled{opacity:.5}#result{font-size:24px;font-weight:bold;color:#7dd3fc;margin:20px 0;overflow-wrap:anywhere}#status{font-size:15px;white-space:pre-wrap;overflow-wrap:anywhere;color:#fbbf24}small{color:#94a3b8}</style></head>
+<body><main><h1>Ақылды көз</h1><p>Камера арқылы айналадағы объектілерді анықтау</p><button id="start">📷 Камераны қосу</button><button id="flip" disabled>🔄 Ауыстыру</button><video id="video" autoplay muted playsinline webkit-playsinline></video><div id="result">Күту режимі...</div><div id="status">Алдымен камераны қосыңыз.</div><small>Нұсқа 3 · Модель негізгі папкадан жүктеледі.</small></main>
+<script>
+'use strict';
+const MODEL_BASE = 'https://mira-dotcom797.github.io/aqyldy-koz/'; // Модель в корне репозитория
+const video=document.getElementById('video'), status=document.getElementById('status'), result=document.getElementById('result'), start=document.getElementById('start'), flip=document.getElementById('flip');
+let stream=null,model=null,facing='environment',running=false, busy=false,lastLabel='',lastSpeech=0;
+function info(s){status.textContent=s;}
+function errorText(e){return (e&&e.name?e.name+': ':'')+(e&&e.message?e.message:String(e));}
+async function camera(){
+ if(!window.isSecureContext)throw Error('HTTPS қажет. Сайтты https:// арқылы ашыңыз.');
+ if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)throw Error('Бұл бетте getUserMedia қолжетімсіз. Safari қолданбасында тікелей ашыңыз (қосымша ішіндегі браузер емес).');
+ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+ video.pause();video.srcObject=null;
+ const tries=[{audio:false,video:{facingMode:{ideal:facing},width:{ideal:640},height:{ideal:480}}},{audio:false,video:true}];
+ let failure;
+ for(const constraints of tries){try{stream=await navigator.mediaDevices.getUserMedia(constraints);break;}catch(e){failure=e;}}
+ if(!stream)throw failure;
+ video.srcObject=stream;
+ await video.play();
+ flip.disabled=false;
+ info('Камера ашылды. Модель жүктелуде...');
+}
+function loadScript(url){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=url;s.onload=resolve;s.onerror=()=>reject(Error('Кітапхана жүктелмеді: '+url));document.head.appendChild(s);});}
+async function loadModel(){
+ if(model)return;
+ if(!window.tf)await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+ if(!window.tmImage)await loadScript('https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js');
+ model=await tmImage.load(MODEL_BASE+'model.json',MODEL_BASE+'metadata.json');
+}
+function say(label){const now=Date.now();if(!('speechSynthesis' in window)||label===lastLabel&&now-lastSpeech<7000)return;lastLabel=label;lastSpeech=now;window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(label);u.lang='kk-KZ';u.rate=.9;window.speechSynthesis.speak(u);}
+async function predict(){if(!running)return;if(busy){setTimeout(predict,180);return;}busy=true;try{if(video.readyState>=2){const items=await model.predict(video);const best=items.reduce((a,b)=>a.probability>b.probability?a:b);if(best.probability>=.7){let name=best.className;const n=name.toLowerCase();if(['қоқыс шелегі','байланыс кабелі','баспалдақ'].some(w=>n.includes(w)))name='Абайлаңыз!!! '+name;result.textContent=name+' ('+Math.round(best.probability*100)+'%)';say(name);}else{result.textContent='Анықталмады...';lastLabel='';}}}catch(e){running=false;info('Тану қатесі: '+errorText(e));}finally{busy=false;if(running)setTimeout(predict,220);}}
+start.onclick=async()=>{start.disabled=true;running=false;try{info('Камераға рұқсат сұралуда...');await camera();result.textContent='Модель жүктелуде...';await loadModel();info('Дайын! Затты камераға көрсетіңіз.');result.textContent='Анықталуда...';running=true;predict();start.textContent='Қайта қосу';}catch(e){info('Қате: '+errorText(e));result.textContent='Камера немесе модель іске қосылмады';}finally{start.disabled=false;}};
+flip.onclick=async()=>{flip.disabled=true;running=false;facing=facing==='environment'?'user':'environment';try{await camera();if(model){running=true;predict();}}catch(e){info('Камераны ауыстыру қатесі: '+errorText(e));}finally{flip.disabled=false;}};
+window.addEventListener('pagehide',()=>{running=false;if(stream)stream.getTracks().forEach(t=>t.stop());});
+</script></body></html>
