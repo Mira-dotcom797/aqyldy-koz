@@ -200,7 +200,7 @@
                 isRunning = true;
                 window.requestAnimationFrame(loop);
             } catch (error) {
-                alert("Қате: Камера немесе модель файлдары табылмады!");
+              alert("Қате: " + error.name + "\n" + error.message);
                 btn.disabled = false;
                 btn.innerText = "Қайта көру";
                 console.error(error);
