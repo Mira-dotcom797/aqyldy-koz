@@ -1,38 +1,54 @@
-<!doctype html>
-<html lang="kk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Ақылды көз — мобильді v3</title>
-<style>body{margin:0;background:#0f172a;color:#e2e8f0;font:17px system-ui,sans-serif;padding:22px;text-align:center}h1{color:#38bdf8}main{max-width:520px;margin:auto;background:#1e293b;border-radius:20px;padding:20px}video{display:block;width:100%;aspect-ratio:1;object-fit:cover;background:#020617;border:2px solid #38bdf8;border-radius:14px}button{background:#38bdf8;color:#082f49;border:0;border-radius:12px;padding:14px 18px;margin:8px;font-weight:700;font-size:17px}button:disabled{opacity:.5}#result{font-size:24px;font-weight:bold;color:#7dd3fc;margin:20px 0;overflow-wrap:anywhere}#status{font-size:15px;white-space:pre-wrap;overflow-wrap:anywhere;color:#fbbf24}small{color:#94a3b8}</style></head>
-<body><main><h1>Ақылды көз</h1><p>Камера арқылы айналадағы объектілерді анықтау</p><button id="start">📷 Камераны қосу</button><button id="flip" disabled>🔄 Ауыстыру</button><video id="video" autoplay muted playsinline webkit-playsinline></video><div id="result">Күту режимі...</div><div id="status">Алдымен камераны қосыңыз.</div><small>Нұсқа 3 · Модель негізгі папкадан жүктеледі.</small></main>
-<script>
-'use strict';
-const MODEL_BASE = 'https://mira-dotcom797.github.io/aqyldy-koz/'; // Модель в корне репозитория
-const video=document.getElementById('video'), status=document.getElementById('status'), result=document.getElementById('result'), start=document.getElementById('start'), flip=document.getElementById('flip');
-let stream=null,model=null,facing='environment',running=false, busy=false,lastLabel='',lastSpeech=0;
-function info(s){status.textContent=s;}
-function errorText(e){return (e&&e.name?e.name+': ':'')+(e&&e.message?e.message:String(e));}
-async function camera(){
- if(!window.isSecureContext)throw Error('HTTPS қажет. Сайтты https:// арқылы ашыңыз.');
- if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)throw Error('Бұл бетте getUserMedia қолжетімсіз. Safari қолданбасында тікелей ашыңыз (қосымша ішіндегі браузер емес).');
- if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
- video.pause();video.srcObject=null;
- const tries=[{audio:false,video:{facingMode:{ideal:facing},width:{ideal:640},height:{ideal:480}}},{audio:false,video:true}];
- let failure;
- for(const constraints of tries){try{stream=await navigator.mediaDevices.getUserMedia(constraints);break;}catch(e){failure=e;}}
- if(!stream)throw failure;
- video.srcObject=stream;
- await video.play();
- flip.disabled=false;
- info('Камера ашылды. Модель жүктелуде...');
+<!doctype html><html lang="kk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Ақылды көз</title><style>body{margin:0;background:#0f172a;color:#f8fafc;font-family:Arial,sans-serif;text-align:center;padding:20px}h1{color:#38bdf8}main{max-width:520px;margin:auto;background:#1e293b;padding:20px;border-radius:18px}video{display:block;width:100%;max-width:400px;aspect-ratio:1;object-fit:cover;background:#020617;margin:16px auto;border:3px solid #38bdf8;border-radius:12px}button{padding:14px 18px;margin:5px;background:#38bdf8;color:#0f172a;border:0;border-radius:9px;font-size:17px;font-weight:bold}button:disabled{opacity:.55}#result{font-size:23px;color:#7dd3fc;margin:16px 0}#status{white-space:pre-wrap;color:#e2e8f0;line-height:1.5}#error{white-space:pre-wrap;color:#fca5a5}</style></head><body><main><h1>Ақылды көз</h1><p>Камера арқылы айналадағы объектілерді анықтау</p><button id="start">Камераны іске қосу</button><button id="switch" hidden>Камераны ауыстыру</button><button id="sound">Дыбыс: қосулы</button><button id="testSound" type="button">🔊 Дауысты тексеру</button><div id="audioStatus" role="status" style="font-size:14px;color:#bae6fd;margin:5px"></div><video id="video" autoplay muted playsinline webkit-playsinline></video><div id="status">Бастау түймесін басыңыз</div><div id="error" role="alert"></div><div id="result" aria-live="polite">Күту режимі...</div><canvas id="frame" width="224" height="224" hidden></canvas></main><script>
+const video=document.getElementById('video'),statusEl=document.getElementById('status'),errorEl=document.getElementById('error'),result=document.getElementById('result'),start=document.getElementById('start'),sw=document.getElementById('switch'),sound=document.getElementById('sound'),frame=document.getElementById('frame');
+let stream=null,model=null,running=false,busy=false,facing='environment',voice=true,lastName='',lastSpeech=0,token=0;
+const testSound=document.getElementById('testSound'),audioStatus=document.getElementById('audioStatus');
+const mobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+let audioContext=null,audioUnlocked=false,speechTimer=null;
+function status(t){statusEl.textContent=t}function error(t){errorEl.textContent=t;status('Қате пайда болды')}
+function stopStream(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null}
+async function camera(){stopStream();if(!navigator.mediaDevices?.getUserMedia)throw Error('Камера API қолжетімсіз. Сайтты HTTPS арқылы Safari немесе Chrome браузерінде ашыңыз.');let s;try{s=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:facing},width:{ideal:640},height:{ideal:480}}})}catch(e){if(e.name==='OverconstrainedError')s=await navigator.mediaDevices.getUserMedia({video:true,audio:false});else throw e}stream=s;video.srcObject=s;await video.play();sw.hidden=false}
+function loadScript(url){return new Promise((resolve,reject)=>{let s=document.createElement('script');s.src=url;s.onload=resolve;s.onerror=()=>reject(Error('Кітапхана жүктелмеді: '+url));document.head.appendChild(s)})}
+async function loadModel(){if(model)return;status('Модель жүктелуде...');if(!window.tf)await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js');if(!window.tmImage)await loadScript('https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js');model=await tmImage.load('./model.json','./metadata.json')}
+async function begin(){if(busy)return;busy=true;start.disabled=true;errorEl.textContent='';try{status('Камера қосылуда...');await camera();status('Камера ашылды. Модель жүктелуде...');await loadModel();running=true;start.hidden=true;status('Тану іске қосылды');let id=++token;loop(id)}catch(e){console.error(e);error('Толық қате: '+(e.message||e.name||e)+'\nКамераға рұқсат беріңіз; HTTPS және model.json, metadata.json, weights.bin файлдарын тексеріңіз.');start.textContent='Қайта көру';start.hidden=false}finally{busy=false;start.disabled=false}}
+async function loop(id){if(!running||id!==token)return;try{if(video.readyState>=2){frame.getContext('2d',{willReadFrequently:true}).drawImage(video,0,0,224,224);const predictions=await model.predict(frame);let best=predictions.reduce((a,b)=>b.probability>a.probability?b:a);if(best.probability>=.7){let name=best.className;result.textContent=name+' ('+Math.round(best.probability*100)+'%)';if(name!==lastName){lastName=name;say(name)}}else{result.textContent='Анықталмады';lastName=''}}}catch(e){console.error(e);error('Тану қатесі: '+e.message);running=false;return}setTimeout(()=>loop(id),180)}
+function say(name){
+ if(!voice||!('speechSynthesis'in window))return;
+ let now=Date.now();if(now-lastSpeech<2500)return;lastSpeech=now;
+ if(!mobile){window.speechSynthesis.cancel();let u=new SpeechSynthesisUtterance(name);u.lang='kk-KZ';u.rate=.9;window.speechSynthesis.speak(u);return}
+ speakMobile(name);
 }
-function loadScript(url){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=url;s.onload=resolve;s.onerror=()=>reject(Error('Кітапхана жүктелмеді: '+url));document.head.appendChild(s);});}
-async function loadModel(){
- if(model)return;
- if(!window.tf)await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
- if(!window.tmImage)await loadScript('https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js');
- model=await tmImage.load(MODEL_BASE+'model.json',MODEL_BASE+'metadata.json');
+function beep(){
+ try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;
+ if(!audioContext)audioContext=new C();audioContext.resume();
+ const o=audioContext.createOscillator(),g=audioContext.createGain();o.frequency.value=740;g.gain.value=.08;
+ o.connect(g);g.connect(audioContext.destination);o.start();o.stop(audioContext.currentTime+.18);
+ }catch(e){audioStatus.textContent='Сигнал қатесі: '+e.message}
 }
-function say(label){const now=Date.now();if(!('speechSynthesis' in window)||label===lastLabel&&now-lastSpeech<7000)return;lastLabel=label;lastSpeech=now;window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(label);u.lang='kk-KZ';u.rate=.9;window.speechSynthesis.speak(u);}
-async function predict(){if(!running)return;if(busy){setTimeout(predict,180);return;}busy=true;try{if(video.readyState>=2){const items=await model.predict(video);const best=items.reduce((a,b)=>a.probability>b.probability?a:b);if(best.probability>=.7){let name=best.className;const n=name.toLowerCase();if(['қоқыс шелегі','байланыс кабелі','баспалдақ'].some(w=>n.includes(w)))name='Абайлаңыз!!! '+name;result.textContent=name+' ('+Math.round(best.probability*100)+'%)';say(name);}else{result.textContent='Анықталмады...';lastLabel='';}}}catch(e){running=false;info('Тану қатесі: '+errorText(e));}finally{busy=false;if(running)setTimeout(predict,220);}}
-start.onclick=async()=>{start.disabled=true;running=false;try{info('Камераға рұқсат сұралуда...');await camera();result.textContent='Модель жүктелуде...';await loadModel();info('Дайын! Затты камераға көрсетіңіз.');result.textContent='Анықталуда...';running=true;predict();start.textContent='Қайта қосу';}catch(e){info('Қате: '+errorText(e));result.textContent='Камера немесе модель іске қосылмады';}finally{start.disabled=false;}};
-flip.onclick=async()=>{flip.disabled=true;running=false;facing=facing==='environment'?'user':'environment';try{await camera();if(model){running=true;predict();}}catch(e){info('Камераны ауыстыру қатесі: '+errorText(e));}finally{flip.disabled=false;}};
-window.addEventListener('pagehide',()=>{running=false;if(stream)stream.getTracks().forEach(t=>t.stop());});
+function speakMobile(name){
+ if(!('speechSynthesis'in window)){audioStatus.textContent='Бұл браузерде дауыс синтезі жоқ';return}
+ const synth=window.speechSynthesis;
+ if(speechTimer){clearTimeout(speechTimer);speechTimer=null}
+ synth.cancel();
+ const u=new SpeechSynthesisUtterance(name);u.lang='kk-KZ';u.rate=.9;u.volume=1;
+ const voices=synth.getVoices();const kk=voices.find(v=>v.lang.toLowerCase().startsWith('kk'));
+ if(kk)u.voice=kk;
+ u.onstart=()=>{audioStatus.textContent='Дауыс ойнатылуда: '+name};
+ u.onend=()=>{audioStatus.textContent='Дауыс аяқталды'};
+ u.onerror=e=>{audioStatus.textContent='Дауыс қатесі: '+e.error+'; iPhone-дағы дауыс тілін тексеріңіз'};
+ synth.speak(u);
+ // Some mobile browsers pause long-running synthesis queues.
+ speechTimer=setTimeout(()=>{if(synth.paused)synth.resume()},800);
+}
+function unlockMobileAudio(){
+ if(!mobile)return;
+ audioUnlocked=true;
+ beep(); // Must run synchronously inside the button's user gesture.
+}
+testSound.onclick=()=>{
+ voice=true;sound.textContent='Дыбыс: қосулы';
+ if(mobile){unlockMobileAudio();speakMobile('Ақылды көз. Дыбыс тексерілуде.');}
+ else {beep();window.speechSynthesis.cancel();let u=new SpeechSynthesisUtterance('Ақылды көз. Дыбыс тексерілуде.');u.lang='kk-KZ';window.speechSynthesis.speak(u)}
+};
+
+start.onclick=begin;sw.onclick=async()=>{sw.disabled=true;errorEl.textContent='';facing=facing==='environment'?'user':'environment';try{await camera();status('Камера ауыстырылды')}catch(e){error('Камераны ауыстыру қатесі: '+e.message)}finally{sw.disabled=false}};sound.onclick=()=>{voice=!voice;sound.textContent='Дыбыс: '+(voice?'қосулы':'өшірулі');if(voice&&mobile){unlockMobileAudio();speakMobile('Дыбыс қосылды')}if(!voice&&window.speechSynthesis)window.speechSynthesis.cancel()};window.addEventListener('pagehide',()=>{running=false;token++;stopStream()});
 </script></body></html>
